@@ -9,7 +9,7 @@ edition = "2018"
 [dependencies]
 tokio = { version = "0.2", features = ["macros", "rt-threaded"] }
 clap = "~2.27.0"
-azure_rs = "0.2.0"
+azure_rs = "0.2.1"
 
 [dev-dependencies]
 futures = "0.3"
