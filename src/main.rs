@@ -1,5 +1,5 @@
 use azure_rs::pull_requests::{PullListOptions, PullRequestResponse, PullUpdateOptions};
-use azure_rs::{ApiVersion, AzureClient, Credentials, Future, Result};
+use azure_rs::{ApiVersion, AzureClient, Credentials, Result};
 use std::env::var;
 use std::fs;
 use std::process::Command;
@@ -51,7 +51,6 @@ pub fn init_clap() {
         // Store token
         write_token(config);
     }
-    //println!("Value for config: {}", config);
 }
 
 pub fn write_token(data: &str) {
@@ -83,16 +82,18 @@ pub fn get_cfg_home() -> String {
 
 #[tokio::main]
 pub async fn get() -> Result<()> {
-    let remote = get_upstream();
+    let remote = &get_upstream();
 
-    let (org_name, project_name, repo_name) = get_details(remote);
+    let (org_name, project_name, repo_name) = get_details(remote.into());
     let branch = get_current_branch();
     println!(
         "Repo: {:?} Project: {:?} Org: {:?}",
         repo_name, project_name, org_name
     );
 
-    let client = get_client(&org_name);
+    let token = get_token();
+    let url = get_upstream();
+    let client = get_client(&org_name, token, url);
     let options = PullListOptions::builder()
         .source_ref_name(format!("refs/heads/{}", branch))
         .build();
@@ -112,19 +113,9 @@ pub async fn get() -> Result<()> {
 
         // If it's already draft, publish right away
         if !is_draft {
-            let draft_options = PullUpdateOptions::builder().draft(true).build();
-            let _ = client
-                .repo(&project_name, &repo_name)
-                .pull(pull_id)
-                .update(&draft_options)
-                .await;
+            let _ = update_draft(&client, pull_id, true, remote.into()).await?;
         }
-        let draft_options = PullUpdateOptions::builder().draft(false).build();
-        let _ = client
-            .repo(project_name, repo_name)
-            .pull(pull_id)
-            .update(&draft_options)
-            .await;
+        let _ = update_draft(&client, pull_id, false, remote.into()).await?;
     } else {
         println!("No pull request found for {:?}", branch);
     }
@@ -136,16 +127,15 @@ pub async fn update_draft(
     client: &AzureClient,
     pull_id: u64,
     is_draft: bool,
-) -> Future<PullRequestResponse> {
-    let remote = get_upstream();
-
+    remote: String,
+) -> Result<PullRequestResponse> {
     let (_, project_name, repo_name) = get_details(remote);
     let draft_options = PullUpdateOptions::builder().draft(is_draft).build();
-    println!("{},{}", project_name, repo_name);
     let response = client
         .repo(project_name, repo_name)
         .pull(pull_id)
-        .update(&draft_options);
+        .update(&draft_options)
+        .await;
     response
 }
 
@@ -208,9 +198,8 @@ pub fn get_details(remote: String) -> (String, String, String) {
 }
 
 /// Returns a simple client to the other examples
-pub fn get_client(org: &str) -> AzureClient {
+pub fn get_client(org: &str, token: String, upstream: String) -> AzureClient {
     let agent = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
-    let token = get_token();
     let creds = Credentials::Basic(token);
 
     let mut azure = AzureClient::new(agent, org, creds).unwrap();
@@ -220,8 +209,7 @@ pub fn get_client(org: &str) -> AzureClient {
 
     // Set base host for the client based on the git remote upstream
     // if not set, it defaults to dev.azure.com
-    let url = get_upstream();
-    let base_url = get_base_url(url);
+    let base_url = get_base_url(upstream);
     azure.set_host(base_url);
 
     azure
@@ -229,7 +217,9 @@ pub fn get_client(org: &str) -> AzureClient {
 
 #[cfg(test)]
 mod tests {
-    use super::{get_base_url, get_details};
+    use super::*;
+    use super::{get_base_url, get_client, get_details, update_draft, PullListOptions};
+    use dotenv;
     #[test]
     fn parse_https_base_url() {
         let url = "https://test.draftpush.com/Company/MyProject/_git/Project.Rust.App".into();
@@ -257,5 +247,60 @@ mod tests {
         assert_eq!(org_name, "Company");
         assert_eq!(project_name, "MyProject");
         assert_eq!(repo_name, "Project.Rust.App");
+    }
+
+    #[tokio::main]
+    #[test]
+    async fn get_test_pr() {
+        fn check_updated_draft(
+            result: Result<PullRequestResponse>,
+            pull_id: i64,
+            should_be_draft: bool,
+        ) {
+            match result {
+                Ok(res) => {
+                    println!("Got pull request: res={:?}", res);
+                    assert_eq!(res.pull_request_id, pull_id);
+                    assert_eq!(res.is_draft, should_be_draft);
+                }
+                Err(e) => {
+                    panic!("Failed to update api {:?}", e);
+                }
+            }
+        }
+        let remote = "https://dev.azure.com/bentestingacc/Azure-Testing/_git/Test";
+        let (org, project, repo) = get_details(remote.into());
+        let token = dotenv::var("AUTH_KEY").unwrap();
+        println!("org={:?}, project={:?}, repo={:?}", org, project, repo);
+
+        let client = get_client(&org, token, remote.into());
+
+        let branch = "draft_push_ci";
+        let options = PullListOptions::builder()
+            .source_ref_name(format!("refs/heads/{}", branch))
+            .build();
+
+        let test = client.repo(&project, &repo).pulls().list(options).await;
+        match test {
+            Ok(result) => {
+                if result.count > 0 {
+                    let pull = &result.value[0];
+                    let pull_id = pull.pull_request_id;
+                    let is_draft = pull.is_draft;
+                    println!("Got pull request: id={} draft={}", pull_id, is_draft);
+                    if !is_draft {
+                        let future = update_draft(&client, pull_id, true, remote.into()).await;
+                        check_updated_draft(future, pull_id as i64, true);
+                    }
+                    let future = update_draft(&client, pull_id, false, remote.into()).await;
+                    check_updated_draft(future, pull_id as i64, false);
+                } else {
+                    panic!("Pull request not found {:?}", result.count);
+                }
+            }
+            Err(e) => {
+                panic!("Request failed {:?}", e);
+            }
+        }
     }
 }
