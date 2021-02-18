@@ -11,17 +11,18 @@ use std::path::Path;
 use std::fs::File;
 use std::io::{BufWriter, Read, Write};
 fn main() -> Result<()> {
-    println!("Hello, world!");
-    init_clap();
+    let check_remote = init_clap();
 
-    let _ = get();
+    if check_remote {
+        let _ = get();
+    }
 
     Ok(())
 }
 
 /// cargo run -- --config <TokenHere>
 /// ./draft_push --config 12
-pub fn init_clap() {
+pub fn init_clap() -> bool {
     let matches = App::new("Draft push")
         .version("1.0")
         .author("Behxhet S. <bensadiku65@gmail.com>")
@@ -31,13 +32,25 @@ pub fn init_clap() {
                 .short("c")
                 .long("config")
                 .required(false)
-                .help("Sets a token, get the token from azure")
+                .help("Configures token that will be used for Azure")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("alias")
+                .short("a")
+                .long("alias")
+                .required(false)
+                .help("Configures xpush alias")
                 .takes_value(true),
         )
         .get_matches();
     // Gets a value for config if supplied by user, or defaults to "null"
     // in which case, check if we have a token locally
     let config = matches.value_of("config").unwrap_or("null");
+
+    // To be able to configure the alias within the binary
+    let alias_path = matches.value_of("alias").unwrap_or("null");
+
     if config == "null" {
         if !Path::new(&get_cfg_home()).exists() {
             panic!("\nNo token and no file containg token\nUse ./draft_push --config <token>\n\n")
@@ -50,7 +63,60 @@ pub fn init_clap() {
     } else {
         // Store token
         write_token(config);
+        println!("Token configured");
+
+        // If we don't have an alias setup, setup the default one
+        // we do this because we don't want to overwrite the alias in case there's a custom one set
+        if !does_alias_exist() {
+            println!("Setting default alias");
+            set_alias(None);
+        }
+        return false;
     }
+
+    // If an alias has been supplied, set it.
+    // TODO, check if alias is valid
+    if alias_path != "null" {
+        println!("Setting custom alias");
+        set_alias(Some(alias_path));
+        return false;
+    }
+    return true;
+}
+
+/// Configures the xpush git alias as global with the provided path
+/// If no path is provided, it will default to "~/./draft_push"
+/// git config --global alias.xpush '!git push $1 $2 && ~/./draft_push'
+pub fn set_alias(path: Option<&str>) {
+    let path = if path.is_none() {
+        "~/./draft_push"
+    } else {
+        path.unwrap()
+    };
+    let aliasing = format!("!git push $1 $2 && {}", path);
+
+    let _ = Command::new("git")
+        .arg("config")
+        .arg("--global")
+        .arg("alias.xpush")
+        .arg(aliasing)
+        .output()
+        .expect("Could not configure xpush as global git alias ?");
+    if does_alias_exist() {
+        println!("Alias successfully set");
+    }
+}
+
+/// check if xpush alias exists already
+/// git config --list | grep alias
+pub fn does_alias_exist() -> bool {
+    let output = Command::new("git")
+        .arg("config")
+        .arg("--list")
+        .output()
+        .expect("Could not configure xpush as global git alias ?");
+    let msg = String::from_utf8_lossy(&output.stdout);
+    msg.contains("alias.xpush")
 }
 
 pub fn write_token(data: &str) {
