@@ -5,7 +5,7 @@ draft_push is a post push script to update pull request status in Azure DevOps.
 
 ## Default setup
 
-1) Download binary [here](https://github.com/bensadiku/draft_push/releases/download/0.2/draft_push) & move it on the `~/` directory
+1) Download binary [here](https://github.com/bensadiku/draft_push/releases/download/0.2.1/draft_push) & move it on the `~/` directory
 2) Create a PAT, [see this](https://docs.microsoft.com/en-us/azure/devops/organizations/accounts/use-personal-access-tokens-to-authenticate?view=azure-devops&tabs=preview-page) p.s. don't give the token full access, it just needs `Read & write` on the `Code` sub section.
 3) Once you have the token, run `./draft_push -c <tokenhere>`. This will set the token and create a `xpush` alias with a default path `~/./draft_push`
 

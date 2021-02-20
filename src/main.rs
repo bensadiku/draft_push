@@ -186,6 +186,7 @@ pub async fn get() -> Result<()> {
         println!("No pull request found for {:?}", branch);
     }
 
+    println!("Done");
     Ok(())
 }
 
@@ -256,11 +257,21 @@ pub fn get_base_url(url: String) -> String {
 
 // Returns the organization, project and repository we are currently in
 pub fn get_details(remote: String) -> (String, String, String) {
+    let project_index = 4;
+    let org_index = 3;
     let list: Vec<&str> = remote.split("/").collect();
     let repo_name: &str = list.last().expect("Could not find repo name");
-    let project_name: &str = list[4];
-    let org_name: &str = list[3];
-    (org_name.into(), project_name.into(), repo_name.into())
+    let project_name: &str = list[project_index];
+    let org_name: &str = list[org_index];
+
+    let mut repo: String = repo_name.into();
+    // sanitize repo string
+    // this has to be done only for repo because of trailing new lines, and repo is always last
+    if repo.ends_with("\n") {
+        repo.pop();
+    }
+
+    (org_name.into(), project_name.into(), repo)
 }
 
 /// Returns a simple client to the other examples
@@ -306,8 +317,38 @@ mod tests {
     }
 
     #[test]
+    fn parse_https_user_base_url() {
+        let url =
+            "ssh://bentestingacc@test.draftpush.com:44/Company/MyProject/_git/Project.Rust.App"
+                .into();
+        let base = get_base_url(url);
+        assert_eq!(base, "https://bentestingacc@test.draftpush.com");
+    }
+
+    #[test]
     fn parse_details() {
         let url = "https://test.draftpush.com/Company/MyProject/_git/Project.Rust.App".into();
+        let (org_name, project_name, repo_name) = get_details(url);
+
+        assert_eq!(org_name, "Company");
+        assert_eq!(project_name, "MyProject");
+        assert_eq!(repo_name, "Project.Rust.App");
+    }
+
+    #[test]
+    fn parse_details_user() {
+        let url =
+            "https://bentestingacc@dev.azure.com/Company/MyProject/_git/Project.Rust.App".into();
+        let (org_name, project_name, repo_name) = get_details(url);
+
+        assert_eq!(org_name, "Company");
+        assert_eq!(project_name, "MyProject");
+        assert_eq!(repo_name, "Project.Rust.App");
+    }
+
+    #[test]
+    fn parse_details_newline() {
+        let url = "https://dev.azure.com/Company/MyProject/_git/Project.Rust.App\n".into();
         let (org_name, project_name, repo_name) = get_details(url);
 
         assert_eq!(org_name, "Company");
@@ -334,7 +375,7 @@ mod tests {
                 }
             }
         }
-        let remote = "https://dev.azure.com/bentestingacc/Azure-Testing/_git/Test";
+        let remote = "https://dev.azure.com/bentestingacc/Azure-Testing/_git/Test\n";
         let (org, project, repo) = get_details(remote.into());
         let token = dotenv::var("AUTH_KEY").unwrap();
         println!("org={:?}, project={:?}, repo={:?}", org, project, repo);
